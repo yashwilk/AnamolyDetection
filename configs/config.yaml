@@ -1,0 +1,129 @@
+# Industrial Pump Anomaly Detection — central configuration.
+# Every module reads runtime parameters from here via src.config.load_config()
+# so behavior can change without touching code.
+
+random_state: 42
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  features_dir: data/features
+  models_dir: models
+  machines_file: data/raw/machines.csv
+  sensor_file: data/raw/sensor_data.parquet
+  failures_file: data/raw/failures.csv
+  features_file: data/features/features.parquet
+
+data_generation:
+  n_machines: 500
+  n_active_machines: 100
+  machine_types: ["Pump_A", "Pump_B", "Pump_C"]
+  sites: ["London", "Manchester", "Birmingham", "Leeds"]
+  manufacturers: ["A", "B", "C"]
+  start_date: "2026-01-01"
+  end_date: "2026-06-30 23:45"
+  freq: "15min"
+  rpm_base:
+    Pump_A: 1450
+    Pump_B: 1600
+    Pump_C: 1350
+  n_failures: 20
+  n_drift_machines: 10
+  point_anomaly_fraction: 0.001
+  failure_types: ["bearing_failure", "overheating", "pump_blockage"]
+  pre_failure_window_hours: 24
+
+sensor_columns:
+  - temperature
+  - pressure
+  - vibration
+  - current
+  - rpm
+  - flow_rate
+  - power
+
+feature_engineering:
+  rolling_window: 8       # ~2 hours at 15-min cadence, matches doc's window=8
+  rolling_min_periods: 3
+  zscore_window: 96       # ~24 hours at 15-min cadence
+  interpolation_limit: 4  # max consecutive points to interpolate
+
+labeling:
+  pre_failure_window_hours: 24
+
+split:
+  train_end: "2026-03-31"
+  validation_end: "2026-04-30"
+
+isolation_forest:
+  n_estimators: 300
+  contamination: "auto"
+  max_samples: "auto"
+  n_jobs: -1
+
+autoencoder:
+  hidden_dims: [128, 64, 16]
+  epochs: 50
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  early_stopping_patience: 5
+
+# XGBoost and LightGBM are supervised: trained on the weak pre-failure
+# labels from src/data/labels.py, on *unscaled* features (tree models
+# don't need standardization). scale_pos_weight: null means "compute
+# automatically from the train split's class imbalance" (see
+# src/models/gradient_boosting.compute_scale_pos_weight) rather than a
+# fixed value that would go stale as the failure rate shifts.
+xgboost:
+  n_estimators: 300
+  max_depth: 5
+  learning_rate: 0.05
+  subsample: 0.8
+  colsample_bytree: 0.8
+  scale_pos_weight: null
+
+lightgbm:
+  n_estimators: 300
+  max_depth: 5
+  learning_rate: 0.05
+  subsample: 0.8
+  colsample_bytree: 0.8
+  scale_pos_weight: null
+
+# Must sum to 1.0. isolation_forest/autoencoder/statistical are purely
+# unsupervised (no failure label needed); xgboost/lightgbm are supervised
+# on historical failure windows, adding a "does this look like the lead-up
+# to a failure we've seen before" signal the unsupervised models can't.
+hybrid_weights:
+  autoencoder: 0.25
+  isolation_forest: 0.25
+  statistical: 0.1
+  xgboost: 0.2
+  lightgbm: 0.2
+
+severity_thresholds:
+  low: 0.70
+  medium: 0.85
+  high: 0.95
+  # score >= high threshold => CRITICAL
+
+monitoring:
+  psi_warning: 0.1
+  psi_critical: 0.25
+  psi_bins: 10
+  performance_window_days: 7
+
+# mlflow>=3 puts the plain filesystem store ("./mlruns") into maintenance
+# mode and raises unless MLFLOW_ALLOW_FILE_STORE=true is set. A local
+# sqlite backend avoids that deprecation entirely and is the currently
+# recommended local/dev setup; point this at a real tracking server URI
+# in production.
+mlflow:
+  experiment_name: "industrial-anomaly-detection"
+  tracking_uri: "sqlite:///mlruns.db"
+
+api:
+  title: "Industrial Anomaly Detection API"
+  version: "1.0.0"
+  history_window: 96   # readings kept per machine to compute rolling/zscore features live
