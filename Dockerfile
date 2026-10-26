@@ -1,5 +1,5 @@
 # --- builder: install dependencies into a venv, isolated from build tools ---
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # --- runtime: copy only the venv and application code ---
-FROM python:3.11-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 RUN groupadd --system app && useradd --system --gid app app
 
